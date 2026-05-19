@@ -16,6 +16,11 @@ from tensorflow.keras.layers import (
 # BAHDANAU ATTENTION LAYER
 # -------------------------------------------------
 
+# THIS DECORATOR IS THE FIX:
+# registers BahdanauAttention with Keras so it can be
+# correctly serialized when saving and deserialized
+# when loading the .keras model file
+@tf.keras.utils.register_keras_serializable(package='Custom')
 class BahdanauAttention(Layer):
     """
     Soft attention over 49 spatial image regions.
@@ -136,9 +141,6 @@ def build_caption_model(vocab_size, max_length, attention_units=256):
         name='lstm'
     )(seq_embed)
 
-    # we use the final hidden state to query attention
-    # hidden_state: (batch, 256)
-
 
     # -------------------------------------------------
     # ATTENTION
@@ -161,12 +163,10 @@ def build_caption_model(vocab_size, max_length, attention_units=256):
     # DECODER
     # -------------------------------------------------
 
-    # collapse lstm sequence output to (batch, 256)
-    # take the last timestep's output
+    # take last timestep output: (batch, 256)
     lstm_last = lstm_out[:, -1, :]
 
-    # merge attended image context + LSTM output
-    # (batch, 512)
+    # merge attended image context + LSTM output: (batch, 512)
     decoder_input = tf.concat([context, lstm_last], axis=-1)
 
     decoder = Dense(
@@ -177,8 +177,7 @@ def build_caption_model(vocab_size, max_length, attention_units=256):
 
     decoder = Dropout(0.4)(decoder)
 
-    # final word prediction
-    # (batch, vocab_size)
+    # final word prediction: (batch, vocab_size)
     outputs = Dense(
         vocab_size,
         activation='softmax',
@@ -218,7 +217,6 @@ if __name__ == "__main__":
 
     model.summary()
 
-    # verify output shape
     import numpy as np
 
     dummy_img = np.zeros((2, 49, 2048))

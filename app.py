@@ -1,7 +1,9 @@
 import streamlit as st
 import pickle
 import numpy as np
+import tensorflow as tf
 
+from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
 from tensorflow.keras.applications.resnet50 import (
@@ -14,7 +16,7 @@ from tensorflow.keras.models import Model
 
 from PIL import Image
 
-from src.models.caption_model import build_caption_model
+from src.models.attention_model import BahdanauAttention
 
 
 # -------------------------------------------------
@@ -36,9 +38,9 @@ st.write("Upload an image and let AI generate a caption.")
 # CONSTANTS
 # -------------------------------------------------
 
-VOCAB_SIZE   = 8768
-MAX_LENGTH   = 34
-MODEL_PATH   = "saved_models/caption_model.keras"
+VOCAB_SIZE     = 8768
+MAX_LENGTH     = 34
+MODEL_PATH     = "saved_models/caption_model.keras"
 TOKENIZER_PATH = "saved_models/tokenizer.pkl"
 
 
@@ -49,14 +51,13 @@ TOKENIZER_PATH = "saved_models/tokenizer.pkl"
 @st.cache_resource
 def load_caption_model():
 
-    # rebuild architecture — bypasses Keras deserialization error
-    model = build_caption_model(
-        vocab_size=VOCAB_SIZE,
-        max_length=MAX_LENGTH
-    )
-
-    # load trained weights only
-    model.load_weights(MODEL_PATH)
+    # custom_object_scope is the most reliable way to inject
+    # a custom layer class during model loading — works even
+    # if the model was saved before the decorator was added
+    with tf.keras.utils.custom_object_scope(
+        {'BahdanauAttention': BahdanauAttention}
+    ):
+        model = load_model(MODEL_PATH)
 
     return model
 
@@ -119,8 +120,8 @@ def extract_features(image):
 # INTEGER -> WORD
 # -------------------------------------------------
 
-# build reverse lookup once — O(1) per word
 def build_index_to_word(tokenizer):
+    """Build reverse lookup dict once — O(1) per word."""
     return {index: word for word, index in tokenizer.word_index.items()}
 
 
@@ -218,7 +219,6 @@ def clean_caption(caption):
 # STREAMLIT UI
 # -------------------------------------------------
 
-# build reverse index once at startup
 index_to_word = build_index_to_word(tokenizer)
 
 beam_width = st.slider(
