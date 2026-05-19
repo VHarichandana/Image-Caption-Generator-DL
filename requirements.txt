@@ -1,9 +1,8 @@
-tensorflow==2.15.0
-numpy==1.26.4
-pandas
-scikit-learn
-matplotlib
-pillow
+tensorflow-cpu==2.15.0
 streamlit
-nltk
+numpy
+pandas
+pillow
 tqdm
+nltk
+scikit-learn
