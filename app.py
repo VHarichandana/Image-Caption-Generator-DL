@@ -2,8 +2,6 @@ import streamlit as st
 import pickle
 import numpy as np
 
-from src.models.caption_model import BahdanauAttention
-from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
 from tensorflow.keras.applications.resnet50 import (
@@ -14,9 +12,9 @@ from tensorflow.keras.applications.resnet50 import (
 from tensorflow.keras.preprocessing.image import img_to_array
 from tensorflow.keras.models import Model
 
-from src.config import BEST_MODEL_FILE, TOKENIZER_FILE
-from src.models.attention_model import BahdanauAttention
 from PIL import Image
+
+from src.models.caption_model import build_caption_model
 
 
 # -------------------------------------------------
@@ -31,9 +29,17 @@ st.set_page_config(
 
 st.title("🖼️ AI Image Caption Generator")
 
-st.write(
-    "Upload an image and let AI generate a caption."
-)
+st.write("Upload an image and let AI generate a caption.")
+
+
+# -------------------------------------------------
+# CONSTANTS
+# -------------------------------------------------
+
+VOCAB_SIZE   = 8768
+MAX_LENGTH   = 34
+MODEL_PATH   = "saved_models/caption_model.keras"
+TOKENIZER_PATH = "saved_models/tokenizer.pkl"
 
 
 # -------------------------------------------------
@@ -42,10 +48,18 @@ st.write(
 
 @st.cache_resource
 def load_caption_model():
-    model = load_model(
-        "saved_models/caption_model.keras",
-        custom_objects={'BahdanauAttention': BahdanauAttention}
+
+    # rebuild architecture — bypasses Keras deserialization error
+    model = build_caption_model(
+        vocab_size=VOCAB_SIZE,
+        max_length=MAX_LENGTH
     )
+
+    # load trained weights only
+    model.load_weights(MODEL_PATH)
+
+    return model
+
 
 caption_model = load_caption_model()
 
@@ -56,18 +70,12 @@ caption_model = load_caption_model()
 
 @st.cache_resource
 def load_tokenizer():
-    with open(TOKENIZER_FILE, "rb") as f:
+
+    with open(TOKENIZER_PATH, "rb") as f:
         return pickle.load(f)
 
 
 tokenizer = load_tokenizer()
-
-
-# -------------------------------------------------
-# CONSTANTS
-# -------------------------------------------------
-
-max_length = 34
 
 
 # -------------------------------------------------
@@ -76,7 +84,9 @@ max_length = 34
 
 @st.cache_resource
 def load_feature_extractor():
+
     base_model = ResNet50(weights='imagenet')
+
     return Model(
         inputs=base_model.inputs,
         outputs=base_model.layers[-3].output
@@ -91,12 +101,14 @@ feature_extractor = load_feature_extractor()
 # -------------------------------------------------
 
 def extract_features(image):
+
     image = image.convert('RGB')
     image = image.resize((224, 224))
     image = img_to_array(image)
     image = np.expand_dims(image, axis=0)
     image = preprocess_input(image)
 
+    # (1, 7, 7, 2048) → (1, 49, 2048)
     feature = feature_extractor.predict(image, verbose=0)
     feature = feature.reshape((1, 49, 2048))
 
@@ -107,28 +119,29 @@ def extract_features(image):
 # INTEGER -> WORD
 # -------------------------------------------------
 
-def index_to_word(integer, tokenizer):
-    for word, index in tokenizer.word_index.items():
-        if index == integer:
-            return word
-    return None
+# build reverse lookup once — O(1) per word
+def build_index_to_word(tokenizer):
+    return {index: word for word, index in tokenizer.word_index.items()}
 
 
 # -------------------------------------------------
 # GREEDY DECODE
 # -------------------------------------------------
 
-def greedy_decode(model, image_feature, tokenizer, max_length):
+def greedy_decode(model, image_feature, tokenizer,
+                  index_to_word, max_length):
+
     caption = 'startseq'
 
     for _ in range(max_length):
+
         sequence = tokenizer.texts_to_sequences([caption])[0]
         sequence = pad_sequences([sequence], maxlen=max_length)
 
         yhat = model.predict([image_feature, sequence], verbose=0)
         yhat = np.argmax(yhat)
 
-        word = index_to_word(yhat, tokenizer)
+        word = index_to_word.get(yhat)
         if word is None:
             break
 
@@ -143,14 +156,18 @@ def greedy_decode(model, image_feature, tokenizer, max_length):
 # BEAM SEARCH DECODE
 # -------------------------------------------------
 
-def beam_search_decode(model, image_feature, tokenizer, max_length, beam_width=3):
-    beams = [[['startseq'], 0.0]]
+def beam_search_decode(model, image_feature, tokenizer,
+                       index_to_word, max_length, beam_width=3):
+
+    beams     = [[['startseq'], 0.0]]
     completed = []
 
     for _ in range(max_length):
+
         all_candidates = []
 
         for beam_tokens, beam_score in beams:
+
             if beam_tokens[-1] == 'endseq':
                 completed.append([beam_tokens, beam_score])
                 continue
@@ -159,11 +176,16 @@ def beam_search_decode(model, image_feature, tokenizer, max_length, beam_width=3
             sequence = tokenizer.texts_to_sequences([caption_so_far])[0]
             sequence = pad_sequences([sequence], maxlen=max_length)
 
-            preds = model.predict([image_feature, sequence], verbose=0)[0]
+            preds = model.predict(
+                [image_feature, sequence],
+                verbose=0
+            )[0]
+
             top_indices = np.argsort(preds)[-beam_width:]
 
             for idx in top_indices:
-                word = index_to_word(idx, tokenizer)
+
+                word = index_to_word.get(idx)
                 if word is None:
                     continue
 
@@ -196,13 +218,16 @@ def clean_caption(caption):
 # STREAMLIT UI
 # -------------------------------------------------
 
+# build reverse index once at startup
+index_to_word = build_index_to_word(tokenizer)
+
 beam_width = st.slider(
     "Beam width",
     min_value=1,
     max_value=6,
     value=3,
     step=1,
-    help="Use 1 for greedy decoding or higher values for beam search."
+    help="1 = greedy decoding · 2–6 = beam search (higher = better quality, slower)"
 )
 
 uploaded_file = st.file_uploader(
@@ -211,29 +236,38 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
+
     image = Image.open(uploaded_file)
-    st.image(image, caption="Uploaded Image", use_container_width=True)
+
+    st.image(
+        image,
+        caption="Uploaded Image",
+        use_container_width=True
+    )
 
     with st.spinner("Generating caption..."):
+
         image_feature = extract_features(image)
 
         if beam_width == 1:
-            generated_caption = greedy_decode(
+            raw_caption = greedy_decode(
                 caption_model,
                 image_feature,
                 tokenizer,
-                max_length
+                index_to_word,
+                MAX_LENGTH
             )
         else:
-            generated_caption = beam_search_decode(
+            raw_caption = beam_search_decode(
                 caption_model,
                 image_feature,
                 tokenizer,
-                max_length,
+                index_to_word,
+                MAX_LENGTH,
                 beam_width=beam_width
             )
 
-        final_caption = clean_caption(generated_caption)
+        final_caption = clean_caption(raw_caption)
 
     st.success("Caption generated!")
     st.subheader("Generated Caption:")
