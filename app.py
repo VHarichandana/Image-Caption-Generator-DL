@@ -50,15 +50,10 @@ TOKENIZER_PATH = "saved_models/tokenizer.pkl"
 
 @st.cache_resource
 def load_caption_model():
-
-    # custom_object_scope is the most reliable way to inject
-    # a custom layer class during model loading — works even
-    # if the model was saved before the decorator was added
-    with tf.keras.utils.custom_object_scope(
-        {'BahdanauAttention': BahdanauAttention}
-    ):
-        model = load_model(MODEL_PATH)
-
+    model = load_model(
+        MODEL_PATH,
+        custom_objects={'BahdanauAttention': BahdanauAttention}
+    )
     return model
 
 
