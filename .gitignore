@@ -20,6 +20,5 @@ Thumbs.db
 .idea/
 # Large model files - only keep best_attention_model.keras and tokenizer.pkl for deployment
 saved_models/attention_model.keras
-saved_models/caption_model.keras
 saved_models/attention_features.pkl
 saved_models/image_features.pkl

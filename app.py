@@ -2,6 +2,7 @@ import streamlit as st
 import pickle
 import numpy as np
 
+from caption_model import BahdanauAttention
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
@@ -41,14 +42,10 @@ st.write(
 
 @st.cache_resource
 def load_caption_model():
-    return load_model(
-        BEST_MODEL_FILE,
-        custom_objects={
-            'BahdanauAttention': BahdanauAttention
-        },
-        compile=False
+    model = load_model(
+        "saved_models/caption_model.keras",
+        custom_objects={'BahdanauAttention': BahdanauAttention}
     )
-
 
 caption_model = load_caption_model()
 
