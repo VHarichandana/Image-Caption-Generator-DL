@@ -1,11 +1,6 @@
 data/Images/
 data/captions.txt
 
-# Generated models and cached artifacts
-saved_models/
-*.keras
-*.pkl
-
 __pycache__/
 *.pyc
 *.pyo
@@ -23,3 +18,8 @@ Thumbs.db
 
 .vscode/
 .idea/
+# Large model files - only keep best_attention_model.keras and tokenizer.pkl for deployment
+saved_models/attention_model.keras
+saved_models/caption_model.keras
+saved_models/attention_features.pkl
+saved_models/image_features.pkl
