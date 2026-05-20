@@ -1,231 +1,293 @@
+import streamlit as st
+import pickle
+import numpy as np
 import tensorflow as tf
 
-from tensorflow.keras.models import Model
+from tensorflow.keras.models import load_model
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 
-from tensorflow.keras.layers import (
-    Input,
-    Dense,
-    LSTM,
-    Embedding,
-    Dropout,
-    Layer
+from tensorflow.keras.applications.resnet50 import (
+    ResNet50,
+    preprocess_input
 )
 
+from tensorflow.keras.preprocessing.image import img_to_array
+from tensorflow.keras.models import Model
 
-# -------------------------------------------------
-# BAHDANAU ATTENTION LAYER
-# -------------------------------------------------
+from PIL import Image
 
-# THIS DECORATOR IS THE FIX:
-# registers BahdanauAttention with Keras so it can be
-# correctly serialized when saving and deserialized
-# when loading the .keras model file
-@tf.keras.utils.register_keras_serializable(package='Custom')
-class BahdanauAttention(Layer):
-    """
-    Soft attention over 49 spatial image regions.
-
-    Inputs:
-        features  : (batch, 49, 2048)  — spatial CNN features
-        hidden    : (batch, 256)       — LSTM hidden state
-
-    Returns:
-        context   : (batch, 2048)      — weighted sum of regions
-        weights   : (batch, 49)        — attention distribution (for visualization)
-    """
-
-    def __init__(self, units, **kwargs):
-        super(BahdanauAttention, self).__init__(**kwargs)
-        self.units = units
-
-        # W1 projects image features: 2048 → units
-        self.W1 = Dense(units)
-
-        # W2 projects LSTM hidden state: 256 → units
-        self.W2 = Dense(units)
-
-        # V scores each location: units → 1
-        self.V  = Dense(1)
-
-
-    def call(self, features, hidden):
-
-        # hidden: (batch, 256) → (batch, 1, 256)
-        hidden_expanded = tf.expand_dims(hidden, 1)
-
-        # score: (batch, 49, units)
-        score = self.V(
-            tf.nn.tanh(
-                self.W1(features) + self.W2(hidden_expanded)
-            )
-        )
-
-        # weights: (batch, 49, 1) → softmax over 49 locations
-        attention_weights = tf.nn.softmax(score, axis=1)
-
-        # context: weighted sum → (batch, 2048)
-        context = attention_weights * features
-        context = tf.reduce_sum(context, axis=1)
-
-        # squeeze weights for output: (batch, 49)
-        attention_weights = tf.squeeze(attention_weights, axis=-1)
-
-        return context, attention_weights
-
-
-    def get_config(self):
-        config = super().get_config()
-        config.update({'units': self.units})
-        return config
+from src.models.attention_model import BahdanauAttention
 
 
 # -------------------------------------------------
-# BUILD CAPTION MODEL
+# PAGE CONFIG
 # -------------------------------------------------
 
-def build_caption_model(vocab_size, max_length, attention_units=256):
-    """
-    Merge-architecture caption model with Bahdanau attention.
+st.set_page_config(
+    page_title="Image Caption Generator",
+    page_icon="🖼️",
+    layout="centered"
+)
 
-    Inputs:
-        image_input  : (batch, 49, 2048)  — spatial features from ResNet50[-3]
-        seq_input    : (batch, max_length) — tokenized partial caption
+st.title("🖼️ AI Image Caption Generator")
 
-    Output:
-        (batch, vocab_size) — next-word probability distribution
-    """
-
-    # -------------------------------------------------
-    # IMAGE BRANCH
-    # -------------------------------------------------
-
-    # (batch, 49, 2048)
-    image_input = Input(shape=(49, 2048), name='image_input')
-
-    # light projection to reduce dimensionality before attention
-    # (batch, 49, 256)
-    image_features = Dense(
-        256,
-        activation='relu',
-        name='image_projection'
-    )(image_input)
-
-    # dropout for regularization
-    image_features = Dropout(0.4)(image_features)
+st.write("Upload an image and let AI generate a caption.")
 
 
-    # -------------------------------------------------
-    # SEQUENCE BRANCH
-    # -------------------------------------------------
+# -------------------------------------------------
+# CONSTANTS
+# -------------------------------------------------
 
-    # (batch, max_length)
-    seq_input = Input(shape=(max_length,), name='seq_input')
-
-    # (batch, max_length, 256)
-    seq_embed = Embedding(
-        vocab_size,
-        256,
-        mask_zero=True,
-        name='embedding'
-    )(seq_input)
-
-    seq_embed = Dropout(0.4)(seq_embed)
-
-    # LSTM returns both output sequence AND hidden state
-    # lstm_out  : (batch, max_length, 256)
-    # hidden    : (batch, 256)
-    lstm_out, hidden_state, _ = LSTM(
-        256,
-        return_sequences=True,
-        return_state=True,
-        name='lstm'
-    )(seq_embed)
+VOCAB_SIZE     = 8768
+MAX_LENGTH     = 34
+MODEL_PATH     = "saved_models/caption_model.keras"
+TOKENIZER_PATH = "saved_models/tokenizer.pkl"
 
 
-    # -------------------------------------------------
-    # ATTENTION
-    # -------------------------------------------------
+# -------------------------------------------------
+# LOAD MODEL
+# -------------------------------------------------
 
-    attention_layer = BahdanauAttention(
-        units=attention_units,
-        name='bahdanau_attention'
+@st.cache_resource
+def load_caption_model():
+    model = load_model(
+        MODEL_PATH,
+        custom_objects={'BahdanauAttention': BahdanauAttention}
     )
-
-    # context : (batch, 256)  — attended image features
-    # weights : (batch, 49)   — where the model is "looking"
-    context, attention_weights = attention_layer(
-        image_features,
-        hidden_state
-    )
-
-
-    # -------------------------------------------------
-    # DECODER
-    # -------------------------------------------------
-
-    # take last timestep output: (batch, 256)
-    lstm_last = lstm_out[:, -1, :]
-
-    # merge attended image context + LSTM output: (batch, 512)
-    decoder_input = tf.concat([context, lstm_last], axis=-1)
-
-    decoder = Dense(
-        256,
-        activation='relu',
-        name='decoder_dense'
-    )(decoder_input)
-
-    decoder = Dropout(0.4)(decoder)
-
-    # final word prediction: (batch, vocab_size)
-    outputs = Dense(
-        vocab_size,
-        activation='softmax',
-        name='output'
-    )(decoder)
-
-
-    # -------------------------------------------------
-    # FINAL MODEL
-    # -------------------------------------------------
-
-    model = Model(
-        inputs=[image_input, seq_input],
-        outputs=outputs,
-        name='attention_caption_model'
-    )
-
-    model.compile(
-        loss='categorical_crossentropy',
-        optimizer='adam',
-        metrics=['accuracy']
-    )
-
     return model
 
 
+caption_model = load_caption_model()
+
+
 # -------------------------------------------------
-# QUICK TEST
+# LOAD TOKENIZER
 # -------------------------------------------------
 
-if __name__ == "__main__":
+@st.cache_resource
+def load_tokenizer():
+    with open(TOKENIZER_PATH, "rb") as f:
+        return pickle.load(f)
 
-    VOCAB_SIZE  = 8768
-    MAX_LENGTH  = 34
 
-    model = build_caption_model(VOCAB_SIZE, MAX_LENGTH)
+tokenizer = load_tokenizer()
 
-    model.summary()
 
-    import numpy as np
+# -------------------------------------------------
+# FEATURE EXTRACTOR
+# -------------------------------------------------
 
-    dummy_img = np.zeros((2, 49, 2048))
-    dummy_seq = np.zeros((2, MAX_LENGTH))
+@st.cache_resource
+def load_feature_extractor():
+    base_model = ResNet50(weights='imagenet')
+    return Model(
+        inputs=base_model.inputs,
+        outputs=base_model.get_layer('conv5_block3_out').output
+    )
 
-    out = model.predict([dummy_img, dummy_seq], verbose=0)
 
-    print("\nOutput shape:", out.shape)
-    # expected: (2, 8768)
+feature_extractor = load_feature_extractor()
 
-    print("Attention layer found:",
-          any(isinstance(l, BahdanauAttention) for l in model.layers))
+
+# -------------------------------------------------
+# EXTRACT FEATURES
+# -------------------------------------------------
+
+def extract_features(image):
+
+    image = image.convert('RGB')
+    image = image.resize((224, 224))
+    image = img_to_array(image)
+    image = np.expand_dims(image, axis=0)
+    image = preprocess_input(image)
+
+    # (1, 7, 7, 2048) → (1, 49, 2048)
+    feature = feature_extractor.predict(image, verbose=0)
+    feature = feature.reshape((1, 49, 2048))
+
+    return feature
+
+
+# -------------------------------------------------
+# INTEGER -> WORD
+# -------------------------------------------------
+
+def build_index_to_word(tokenizer):
+    """Build reverse lookup dict once — O(1) per word."""
+    return {index: word for word, index in tokenizer.word_index.items()}
+
+
+# -------------------------------------------------
+# PREDICT HELPER
+# -------------------------------------------------
+
+def model_predict(model, image_feature, sequence):
+    """
+    Keras 3 requires dict input for multi-input models.
+    Falls back to list input for Keras 2 compatibility.
+    """
+    try:
+        # Keras 3 — pass as named dict matching Input layer names
+        return model.predict(
+            {
+                'image_input': image_feature,
+                'seq_input':   sequence
+            },
+            verbose=0
+        )
+    except Exception:
+        # Keras 2 fallback — pass as list
+        return model.predict(
+            [image_feature, sequence],
+            verbose=0
+        )
+
+
+# -------------------------------------------------
+# GREEDY DECODE
+# -------------------------------------------------
+
+def greedy_decode(model, image_feature, tokenizer,
+                  index_to_word, max_length):
+
+    caption = 'startseq'
+
+    for _ in range(max_length):
+
+        sequence = tokenizer.texts_to_sequences([caption])[0]
+        sequence = pad_sequences([sequence], maxlen=max_length)
+
+        yhat = model_predict(model, image_feature, sequence)
+        yhat = np.argmax(yhat)
+
+        word = index_to_word.get(yhat)
+        if word is None:
+            break
+
+        caption += ' ' + word
+        if word == 'endseq':
+            break
+
+    return caption
+
+
+# -------------------------------------------------
+# BEAM SEARCH DECODE
+# -------------------------------------------------
+
+def beam_search_decode(model, image_feature, tokenizer,
+                       index_to_word, max_length, beam_width=3):
+
+    beams     = [[['startseq'], 0.0]]
+    completed = []
+
+    for _ in range(max_length):
+
+        all_candidates = []
+
+        for beam_tokens, beam_score in beams:
+
+            if beam_tokens[-1] == 'endseq':
+                completed.append([beam_tokens, beam_score])
+                continue
+
+            caption_so_far = ' '.join(beam_tokens)
+            sequence = tokenizer.texts_to_sequences([caption_so_far])[0]
+            sequence = pad_sequences([sequence], maxlen=max_length)
+
+            preds = model_predict(
+                model,
+                image_feature,
+                sequence
+            )[0]
+
+            top_indices = np.argsort(preds)[-beam_width:]
+
+            for idx in top_indices:
+
+                word = index_to_word.get(idx)
+                if word is None:
+                    continue
+
+                score = beam_score + np.log(preds[idx] + 1e-10)
+                all_candidates.append([beam_tokens + [word], score])
+
+        if not all_candidates:
+            break
+
+        all_candidates.sort(key=lambda x: x[1], reverse=True)
+        beams = all_candidates[:beam_width]
+
+    completed.extend(beams)
+    completed.sort(key=lambda x: x[1], reverse=True)
+
+    return ' '.join(completed[0][0])
+
+
+# -------------------------------------------------
+# CLEAN CAPTION
+# -------------------------------------------------
+
+def clean_caption(caption):
+    caption = caption.replace('startseq', '')
+    caption = caption.replace('endseq', '')
+    return caption.strip()
+
+
+# -------------------------------------------------
+# STREAMLIT UI
+# -------------------------------------------------
+
+index_to_word = build_index_to_word(tokenizer)
+
+beam_width = st.slider(
+    "Beam width",
+    min_value=1,
+    max_value=6,
+    value=3,
+    step=1,
+    help="1 = greedy decoding · 2–6 = beam search (higher = better quality, slower)"
+)
+
+uploaded_file = st.file_uploader(
+    "Upload an image",
+    type=['jpg', 'jpeg', 'png']
+)
+
+if uploaded_file is not None:
+
+    image = Image.open(uploaded_file)
+
+    st.image(
+        image,
+        caption="Uploaded Image",
+        use_container_width=True
+    )
+
+    with st.spinner("Generating caption..."):
+
+        image_feature = extract_features(image)
+
+        if beam_width == 1:
+            raw_caption = greedy_decode(
+                caption_model,
+                image_feature,
+                tokenizer,
+                index_to_word,
+                MAX_LENGTH
+            )
+        else:
+            raw_caption = beam_search_decode(
+                caption_model,
+                image_feature,
+                tokenizer,
+                index_to_word,
+                MAX_LENGTH,
+                beam_width=beam_width
+            )
+
+        final_caption = clean_caption(raw_caption)
+
+    st.success("Caption generated!")
+    st.subheader("Generated Caption:")
+    st.write(final_caption)
