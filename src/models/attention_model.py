@@ -16,8 +16,6 @@ from tensorflow.keras.models import Model
 
 from PIL import Image
 
-from src.models.attention_model import BahdanauAttention
-
 
 # -------------------------------------------------
 # PAGE CONFIG
