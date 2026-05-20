@@ -66,7 +66,6 @@ caption_model = load_caption_model()
 
 @st.cache_resource
 def load_tokenizer():
-
     with open(TOKENIZER_PATH, "rb") as f:
         return pickle.load(f)
 
@@ -80,9 +79,7 @@ tokenizer = load_tokenizer()
 
 @st.cache_resource
 def load_feature_extractor():
-
     base_model = ResNet50(weights='imagenet')
-
     return Model(
         inputs=base_model.inputs,
         outputs=base_model.get_layer('conv5_block3_out').output
@@ -121,6 +118,28 @@ def build_index_to_word(tokenizer):
 
 
 # -------------------------------------------------
+# PREDICT HELPER
+# -------------------------------------------------
+
+def model_predict(model, image_feature, sequence):
+    """
+    Use model as callable — works in both Keras 2 and Keras 3.
+    Returns numpy array of shape (1, vocab_size).
+    """
+    img_tensor = tf.constant(image_feature, dtype=tf.float32)
+    seq_tensor = tf.constant(sequence,      dtype=tf.float32)
+
+    # call model directly — bypasses input spec validation
+    preds = model(
+        [img_tensor, seq_tensor],
+        training=False
+    )
+
+    # convert to numpy
+    return preds.numpy()
+
+
+# -------------------------------------------------
 # GREEDY DECODE
 # -------------------------------------------------
 
@@ -132,9 +151,12 @@ def greedy_decode(model, image_feature, tokenizer,
     for _ in range(max_length):
 
         sequence = tokenizer.texts_to_sequences([caption])[0]
-        sequence = pad_sequences([sequence], maxlen=max_length)
+        sequence = pad_sequences(
+            [sequence],
+            maxlen=max_length
+        ).astype(np.float32)
 
-        yhat = model.predict([image_feature, sequence], verbose=0)
+        yhat = model_predict(model, image_feature, sequence)
         yhat = np.argmax(yhat)
 
         word = index_to_word.get(yhat)
@@ -170,11 +192,15 @@ def beam_search_decode(model, image_feature, tokenizer,
 
             caption_so_far = ' '.join(beam_tokens)
             sequence = tokenizer.texts_to_sequences([caption_so_far])[0]
-            sequence = pad_sequences([sequence], maxlen=max_length)
+            sequence = pad_sequences(
+                [sequence],
+                maxlen=max_length
+            ).astype(np.float32)
 
-            preds = model.predict(
-                [image_feature, sequence],
-                verbose=0
+            preds = model_predict(
+                model,
+                image_feature,
+                sequence
             )[0]
 
             top_indices = np.argsort(preds)[-beam_width:]
