@@ -85,7 +85,7 @@ def load_feature_extractor():
 
     return Model(
         inputs=base_model.inputs,
-        outputs=base_model.layers[-3].output
+        outputs=base_model.get_layer('conv5_block3_out').output
     )
 
 

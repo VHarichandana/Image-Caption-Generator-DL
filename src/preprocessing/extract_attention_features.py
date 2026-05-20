@@ -39,7 +39,7 @@ base_model = ResNet50(
 
 feature_extractor = Model(
     inputs=base_model.inputs,
-    outputs=base_model.layers[-3].output
+    outputs=base_model.get_layer('conv5_block3_out').output
 )
 
 print(feature_extractor.output_shape)
