@@ -401,7 +401,7 @@ Evaluation is performed only on the held-out test split.
 ---
 
 # Known Limitations
-
+- The model is trained on the small Flickr8k dataset, so it may generate incorrect captions for complex or unfamiliar images. In some cases, it predicts common caption patterns from the dataset instead of accurately describing every object in the image.
 - Vocabulary is limited to Flickr8k
 - Captions may become repetitive on unseen domains
 - Performance drops on highly complex scenes
