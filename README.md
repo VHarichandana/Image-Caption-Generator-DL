@@ -3,6 +3,8 @@
 
 An end-to-end deep learning pipeline that generates natural language descriptions for images using CNN feature extraction, LSTM sequence modeling, Bahdanau Attention, and Beam Search decoding.
 
+This project includes a Streamlit web app for real-time caption generation, attention heatmap visualization, and BLEU score evaluation using reference captions.
+
 This is my first deep learning project where I tried building an image captioning system from scratch using neural networks and deployed it with Streamlit.
 
 ---
@@ -15,6 +17,8 @@ This project generates captions for images by combining:
 - **LSTM** - sequential word generation
 - **Bahdanau Attention** - focuses on important image regions dynamically
 - **Beam Search** - improves caption quality over greedy decoding
+- **Attention Heatmap** - visualizes image regions focused on during caption generation
+- **BLEU Score Evaluation** - compares generated captions with reference captions
 - **Streamlit** - interactive web app for real-time inference
 
 ---
@@ -25,7 +29,7 @@ Upload an image in the Streamlit and the model generates a caption instantly.
 
 ## Sample
 
-Input Image:
+Caption Generator Image:
 
 ![Input](input_image.jpg)
 
@@ -34,6 +38,13 @@ Generated Caption:
 ```text
 dog is running on the grass
 ```
+Attention Heatmap Image:
+
+![Attention_heatmap](/assets/attention_heatmap.png)
+
+BLEU Score Image:
+
+![bleu_score](/assets/bleu_score.png)
 
 ---
 
@@ -59,6 +70,11 @@ Image-Caption-Generator-DL/
 │   ├── attention_features.pkl
 │   ├── best_attention_model.keras
 │   └── attention_model.keras
+│
+├── assets/
+│   ├── caption_generator.png
+│   ├── attention_heatmap.png
+│   └── bleu_score.png
 │
 ├── src/
 │   ├── preprocessing/
@@ -263,6 +279,16 @@ LSTM Decoder
 Beam Search Decoding
   ↓
 Generated Caption
+
+Streamlit app also includes:
+
+Generated Caption + Attention Weights
+  ↓
+Attention Heatmap Visualization
+
+Generated Caption + Reference Caption
+  ↓
+BLEU Score Evaluation
 ```
 
 ---
@@ -390,9 +416,11 @@ Evaluation is performed only on the held-out test split.
 - Transfer learning with ResNet50
 - Spatial attention mechanism
 - Bahdanau Attention
+- Attention heatmap visualization
 - Beam search decoding
 - Greedy decoding
 - BLEU score evaluation
+- BLEU score calculation in Streamlit using reference captions
 - Early stopping
 - Learning rate scheduling
 - Streamlit deployment
@@ -401,18 +429,21 @@ Evaluation is performed only on the held-out test split.
 ---
 
 # Known Limitations
-- The model is trained on the small Flickr8k dataset, so it may generate incorrect captions for complex or unfamiliar images. In some cases, it predicts common caption patterns from the dataset instead of accurately describing every object in the image.
+
+- The model is trained on the small Flickr8k dataset.
+- It may generate incorrect captions for complex or unfamiliar images.
 - Vocabulary is limited to Flickr8k
 - Captions may become repetitive on unseen domains
 - Performance drops on highly complex scenes
 - ResNet50 backbone is frozen
+- Beam search may not always perform better than greedy decoding for this trained model.
 - BLEU scores are relatively low because Flickr8k is small
+- BLEU score needs a correct reference caption for comparison.
 
 ---
 
 # Future Improvements
 
-- Attention heatmap visualization
 - Transformer decoder architecture
 - Fine-tuning top ResNet layers
 - Training on Flickr30k or MS-COCO
