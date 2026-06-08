@@ -7,3 +7,4 @@ pillow
 tqdm
 nltk
 scikit-learn
+matplotlib
